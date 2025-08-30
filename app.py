@@ -224,6 +224,9 @@ async def generate_subtitles(
         file: Optional[UploadFile] = File(None),
         youtube_url: Optional[str] = Form(None)
 ):
+    
+    upload_dir = '/tmp/audio'
+    os.makedirs(upload_dir, exist_ok=True)
 
     s3_resource = boto3.client("s3")
     bucket_name = "subtitle-generator-project"
@@ -231,8 +234,6 @@ async def generate_subtitles(
     if file:
         job_id, s3_key = await store_in_s3(file, s3_resource, bucket_name)
     elif youtube_url:
-        upload_dir = '/tmp/audio'
-        os.makedirs(upload_dir, exist_ok=True)
         output_template = os.path.join(upload_dir, "%(title)s.%(ext)s")
         filepath = youtube_download_video(youtube_url, upload_dir, output_template)
         filename = os.path.basename(filepath)
