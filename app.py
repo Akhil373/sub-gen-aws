@@ -254,7 +254,7 @@ async def generate_subtitles(
         file_name_without_extension, _ = os.path.splitext(base_name)
 
         FILE_NAME_FOR_TXT = file_name_without_extension
-        model_size = "small"
+        model_size = "tiny"
 
         print(f"\nLoading Whisper model: {model_size}...")
         model_dir = "/tmp/models"
