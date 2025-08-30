@@ -202,18 +202,18 @@ async def store_in_s3(file: UploadFile, s3_resource, bucket_name):
     except S3UploadFailedError as err:
         raise HTTPException(status_code=400, detail=f"Error when uploading to S3: {err}")
 
-def generate_presigned_url(s3_client, client_method, method_parameters, expires_in):
-    try:
-        url = s3_client.generate_presigned_url(
-            ClientMethod=client_method, Params=method_parameters, ExpiresIn=expires_in
-        )
-        print("Got presigned URL: %s", url)
-    except ClientError:
-        print(
-            "Couldn't get a presigned URL for client method '%s'.", client_method
-        )
-        raise
-    return url
+# def generate_presigned_url(s3_client, client_method, method_parameters, expires_in):
+#     try:
+#         url = s3_client.generate_presigned_url(
+#             ClientMethod=client_method, Params=method_parameters, ExpiresIn=expires_in
+#         )
+#         print("Got presigned URL: %s", url)
+#     except ClientError:
+#         print(
+#             "Couldn't get a presigned URL for client method '%s'.", client_method
+#         )
+#         raise
+#     return url
 
 @app.get('/test')
 async def test_endpoint():
@@ -321,7 +321,11 @@ async def generate_subtitles(
             # return FileResponse(tmp_path, media_type="application/zip", filename="subtitles.zip")
             result_key = f"results/{job_id}/subtitled_files.zip"
             s3_resource.upload_file(tmp_path, bucket_name, result_key)
-            presigned_url = generate_presigned_url(s3_resource,'get_object', {"Bucket": bucket_name, 'Key': result_key}, 3600)
+            presigned_url = s3_resource.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': result_key},
+                ExpiresIn=3600
+            )
             return presigned_url
 
         except Exception as e:
