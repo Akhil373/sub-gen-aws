@@ -49,7 +49,7 @@ def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
             print(f"Downloading from YouTube: {URLS[0]}")
             info = ydl.extract_info(URLS[0], download=True)
             if not info:
-                return "Error downloading youtube video"
+                return None
             
             final_filepath = None
             if 'requested_downloads' in info and info['requested_downloads']:
@@ -65,12 +65,13 @@ def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
                         final_filepath = guessed_path
                     else:
                         print(f"Could not determine downloaded file path for {URLS[0]}.")
+                        return None 
+
+            return final_filepath
 
         except Exception as e:
             print(f"An error occurred during YouTube download: {e}")
-            final_filepath = None
-        finally:
-            return final_filepath
+            return None
           
 def local_audio_file(DOWNLOAD_DIR, AUDIO_FILE):
     try:
@@ -229,6 +230,10 @@ async def generate_subtitles(
     elif youtube_url:
         output_template = os.path.join(upload_dir, "%(title)s.%(ext)s")
         filepath = youtube_download_video(youtube_url, upload_dir, output_template)
+        
+        if filepath is None or not os.path.exists(filepath):
+            raise HTTPException(status_code=400, detail="Failed to download YouTube video")
+        
         filename = os.path.basename(filepath)
         job_id = str(uuid.uuid4())
         s3_key = f"uploads/{job_id}/{filename}"
