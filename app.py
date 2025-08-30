@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import boto3
 from boto3.s3.transfer import S3UploadFailedError
 from botocore.exceptions import ClientError
+from botocore.client import Config
 
 app = FastAPI()
 
@@ -228,7 +229,11 @@ async def generate_subtitles(
     upload_dir = '/tmp/audio'
     os.makedirs(upload_dir, exist_ok=True)
 
-    s3_resource = boto3.client("s3")
+    s3_resource = boto3.client(
+        "s3",
+        region_name='eu-north-1',
+        config=Config(signature_version='s3v4')
+    )
     bucket_name = "subtitle-generator-project"
 
     if file:
