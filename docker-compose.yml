@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    container_name: subtitle_generator_dev
+    volumes:
+      - .:/app
+      - ./models:/app/models
+    tty: true
+    stdin_open: true

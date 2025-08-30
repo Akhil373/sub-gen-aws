@@ -1,0 +1,5 @@
+audio/*
+.venv
+.idea
+models/*
+__pychache__
