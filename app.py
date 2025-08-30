@@ -329,9 +329,7 @@ async def generate_subtitles(
             presigned_url = s3_resource.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': bucket_name, 'Key': result_key},
-                ExpiresIn=3600,
-                config=Config(signature_version='s3v4'),
-                region_name='us-east-2'
+                ExpiresIn=3600
             )
             return presigned_url
 
