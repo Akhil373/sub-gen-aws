@@ -262,7 +262,7 @@ async def generate_subtitles(
                 model_size,
                 device="cpu",
                 compute_type="int8",
-                download_root="/app/models"
+                download_root="/tmp/app/models"
             )
             batched_model = BatchedInferencePipeline(model=model)
             print("Model loaded successfully.")
