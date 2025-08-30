@@ -257,12 +257,14 @@ async def generate_subtitles(
         model_size = "small"
 
         print(f"\nLoading Whisper model: {model_size}...")
+        model_dir = "/tmp/models"
+        os.makedirs(model_dir, exist_ok=True)
         try:
             model = WhisperModel(
                 model_size,
                 device="cpu",
                 compute_type="int8",
-                download_root="/tmp/app/models"
+                download_root=model_dir
             )
             batched_model = BatchedInferencePipeline(model=model)
             print("Model loaded successfully.")
