@@ -40,6 +40,9 @@ def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
     ydl_opts = {
         'outtmpl': output_template,
         'format': 'bestvideo[height<=1080]+bestaudio/best',
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
         'merge_output_format': 'mp4',
         'verbose': True
     }
