@@ -190,7 +190,7 @@ def add_subtitles(media_path):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-def clean_files(path, zip_file, video_path, srt_path):
+def clean_files(path, zip_file, video_path):
     try:
         if os.path.isdir(path):
             shutil.rmtree(path)
@@ -198,12 +198,11 @@ def clean_files(path, zip_file, video_path, srt_path):
             os.remove(zip_file)
         if os.path.exists(video_path):
             os.remove(video_path)
-        if os.path.exists(srt_path):
-            os.remove(srt_path)
+        # if os.path.exists(srt_path):
+        #     os.remove(srt_path)
         print("Log: Cleaned all files")
     except Exception as err:
         print("Error clearing files: ", err)
-
 
 async def store_in_s3(file: UploadFile, s3_resource, bucket_name):
     job_id = uuid.uuid4()
@@ -226,7 +225,7 @@ async def generate_subtitles(
         file: Optional[UploadFile] = File(None),
         youtube_url: Optional[str] = Form(None)
 ):
-    
+
     upload_dir = '/tmp/audio'
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -334,7 +333,7 @@ async def generate_subtitles(
                 Params={'Bucket': bucket_name, 'Key': result_key},
                 ExpiresIn=3600
             )
-            return presigned_url
+            return {"download_url": presigned_url}
 
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -345,7 +344,7 @@ async def generate_subtitles(
             if 'batched_model' in locals():
                 del batched_model
             print("Model resources released.")
-            clean_files(upload_dir, tmp_path, final_filepath, transcript_filename)
+            clean_files(upload_dir, tmp_path, final_filepath)
             import gc
             gc.collect()
 
