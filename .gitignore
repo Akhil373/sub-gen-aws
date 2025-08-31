@@ -3,3 +3,4 @@ audio/*
 .idea
 models/*
 __pychache__
+test.py
