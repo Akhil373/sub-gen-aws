@@ -120,7 +120,7 @@ async def generate_subtitles(
 ):
     upload_dir = '/tmp/audio'
     os.makedirs(upload_dir, exist_ok=True)
-    job_id: UUID | None = None
+    job_id: str | None = None
     s3_key: str | None = None
 
     if file:
