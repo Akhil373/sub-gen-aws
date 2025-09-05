@@ -120,7 +120,7 @@ async def generate_subtitles(
 ):
     upload_dir = '/tmp/audio'
     os.makedirs(upload_dir, exist_ok=True)
-    job_id: str | None = None
+    job_id: UUID | None = None
     s3_key: str | None = None
 
     if file:
@@ -134,8 +134,9 @@ async def generate_subtitles(
             raise HTTPException(status_code=400, detail="Failed to download YouTube video")
 
         filename = os.path.basename(filepath)
-        job_id: str = str(uuid.uuid4())
-        s3_key: str = f"uploads/{job_id}/{filename}"
+        job_id: UUID = uuid.uuid4()
+        job_id_str: str = str(job_id)
+        s3_key: str = f"uploads/{job_id_str}/{filename}"
         s3_resource.upload_file(filepath, bucket_name, s3_key)
     else:
         raise HTTPException(status_code=400, detail="You must provide either a file or youtube URL.")
@@ -161,7 +162,7 @@ async def generate_subtitles(
     except Exception as e:
         print(f'Error invoking Lambda: {e}')
         status_table.put_item(Item={
-            'job_id': job_id,
+            'job_id': job_id_str,
             'status': 'FAILED',
             'message': str(e)
         })
