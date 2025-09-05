@@ -34,7 +34,7 @@ s3_resource: BaseClient = boto3.client(
     config=Config(signature_version='s3v4')
 )
 bucket_name = "subtitle-generator-project"
-lambda_client = boto3.client("lambda")
+lambda_client = boto3.client("lambda", region_name="eu-north-1")
 dynamodb = boto3.resource('dynamodb', region_name="eu-north-1")
 status_table = dynamodb.Table('SubtitleJobStatus')
 
