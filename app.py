@@ -149,7 +149,7 @@ async def generate_subtitles(
     }
     try:
         response = lambda_client.invoke(
-            FunctionName='run-whisper',
+            FunctionName='subtitle-gen-lambda',
             InvocationType='Event',
             Payload=json.dumps(payload)
         )

@@ -131,8 +131,8 @@ def clean_files(path, zip_file, video_path):
 
 
 def lambda_handler(event, context):
-    current_path = os.environ['PATH']
-    os.environ['PATH'] = os.environ['LAMBDA_TASK_ROOT'] + ':' + current_path
+    # current_path = os.environ['PATH']
+    # os.environ['PATH'] = os.environ['LAMBDA_TASK_ROOT'] + ':' + current_path
 
     payload = event if 'body' not in event else json.loads(event['body'])
     s3_key: str = payload['s3_key']

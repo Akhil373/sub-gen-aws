@@ -5,4 +5,3 @@ models/*
 __pycache__
 test.py
 lambda_func.zip
-lambda_func/ffmpeg
