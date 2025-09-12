@@ -11,6 +11,9 @@ import subprocess
 import boto3
 from botocore.client import BaseClient, Config
 
+os.environ['HF_HOME'] = '/tmp/huggingface'
+os.environ['HF_HUB_CACHE'] = '/tmp/huggingface/hub'
+
 dynamodb = boto3.resource('dynamodb', region_name="eu-north-1")
 status_table = dynamodb.Table('SubtitleJobStatus')
 
@@ -117,11 +120,11 @@ def add_subtitles(media_path, subtitle_file):
 
 def clean_files(path, zip_file, video_path):
     try:
-        if os.path.isdir(path):
+        if path and os.path.isdir(path):
             shutil.rmtree(path)
-        if os.path.exists(zip_file):
+        if zip_file and os.path.exists(zip_file):
             os.remove(zip_file)
-        if os.path.exists(video_path):
+        if video_path and os.path.exists(video_path):
             os.remove(video_path)
         # if os.path.exists(srt_path):
         #     os.remove(srt_path)
@@ -131,15 +134,13 @@ def clean_files(path, zip_file, video_path):
 
 
 def lambda_handler(event, context):
-    # current_path = os.environ['PATH']
-    # os.environ['PATH'] = os.environ['LAMBDA_TASK_ROOT'] + ':' + current_path
-
     payload = event if 'body' not in event else json.loads(event['body'])
     s3_key: str = payload['s3_key']
     job_id: str = payload['job_id']
     bucket_name: str = payload['bucket_name']
 
-    final_filepath: str = f"/tmp/{job_id}_video.mp4"
+    original_filename: str = s3_key.split('/')[-1]
+    final_filepath: str = f"/tmp/{original_filename}"
     download_dir: str = '/tmp/audio'
     tmp_path = None
 
@@ -225,13 +226,13 @@ def lambda_handler(event, context):
                         zf.write(f, arcname=f.name)
                 tmp_path = tmp.name
 
-            result_key = f"results/{job_id}/subtitled_files.zip"
+            result_key = f"results/{job_id}/{original_filename}_subtitled.zip"
             s3_resource.upload_file(tmp_path, bucket_name, result_key)
 
             status_table.put_item(Item={
                 'job_id': job_id,
                 'status': 'COMPLETED',
-                'result_key': f"results/{job_id}/subtitled_files.zip",
+                'result_key': result_key,
                 'message': 'Subtitles generated successfully.'
             })
 
@@ -264,7 +265,7 @@ def lambda_handler(event, context):
             del model
         if 'batched_model' in locals():
             del batched_model
-        print("Model resources released.")
         clean_files(download_dir, tmp_path, final_filepath)
+        print("Model resources released.")
         import gc
         gc.collect()
