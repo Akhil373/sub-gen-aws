@@ -1,5 +1,4 @@
 import asyncio
-import glob
 import json
 import logging
 import os
@@ -138,51 +137,58 @@ async def upload_chunks_to_s3(chunk_files: list, job_id: str, file_extension: st
 
 def split_file_into_chunks(
     filepath: str, job_id: str, chunk_duration: int = 60
-) -> List[str]:
+) -> List[dict]:
     original_ext = get_file_extension(filepath)
-    output_pattern = f"/tmp/audio/{job_id}/chunk_%03d{original_ext}"
-    try:
-        os.makedirs(f"/tmp/audio/{job_id}", exist_ok=True)
+    output_dir = f"/tmp/audio/{job_id}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    probe_cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=nw=1",
+        filepath,
+    ]
+    result = subprocess.run(probe_cmd, capture_output=True, text=True)
+    total_duration = float(result.stdout.strip().replace("duration=", ""))
+
+    chunk_files = []
+    current_time = 0.0
+    chunk_index = 0
+
+    while current_time < total_duration:
+        chunk_start = current_time
+        chunk_end = min(current_time + chunk_duration, total_duration)
+        output_path = os.path.join(output_dir, f"chunk_{chunk_index:03d}{original_ext}")
+
         cmd = [
             "ffmpeg",
             "-i",
             filepath,
-            "-f",
-            "segment",
-            "-segment_time",
-            str(chunk_duration),
-            "-reset_timestamps",
-            "1",
+            "-ss",
+            str(chunk_start),
+            "-to",
+            str(chunk_end),
             "-c",
             "copy",
-            output_pattern,
+            output_path,
+            "-y",
+            "-loglevel",
+            "error",
         ]
         subprocess.run(cmd, check=True)
 
-        chunk_files = sorted(glob.glob(f"/tmp/audio/{job_id}/chunk_*{original_ext}"))
-        return chunk_files
-    except Exception as e:
-        raise HTTPException(
-            status_code=400, details=f"Error whe splitting file: {e}"
-        ) from e
-
-
-def trigger_lambda(job_id: str, total_chunks: int):
-    for chunk_index in range(total_chunks):
-        response = lambda_client.invoke(
-            FunctionName="subtitle-gen-lambda",
-            InvocationType="Event",
-            Payload=json.dumps(
-                {
-                    "job_id": str(job_id),
-                    "chunk_index": chunk_index,
-                    "total_chunks": total_chunks,
-                    "s3_key": f"chunks/{job_id}/chunk_{chunk_index:03d}.mp4",
-                    "bucket_name": bucket_name,
-                }
-            ),
+        chunk_files.append(
+            {"path": output_path, "start": chunk_start, "index": chunk_index}
         )
-    return response
+
+        current_time = chunk_end
+        chunk_index += 1
+
+    return chunk_files
 
 
 def add_subtitles(media_path, subtitle_file):
@@ -219,10 +225,13 @@ def add_subtitles(media_path, subtitle_file):
             subprocess.run(cmd, check=True, capture_output=True)
 
             if ext.lower() == ".mp4":
-                os.remove(media_path)
-                os.rename(temp_output, media_path)
+                os.replace(temp_output, media_path)
+                return media_path
             else:
-                os.rename(temp_output, final_output)
+                final_output = os.path.join(dir_path, f"{base}_subtitled.mp4")
+                os.replace(temp_output, final_output)
+                return final_output
+
         else:
             print("Found audio file.")
             temp_video = os.path.join(dir_path, f"{base}_temp.mp4")
@@ -264,26 +273,6 @@ def add_subtitles(media_path, subtitle_file):
         print(f"FFmpeg Error: {e.stderr.decode()}")
     except Exception as e:
         print(f"An error occurred: {e}")
-
-
-def combine_segments_with_timing(all_segments: list, total_chunks: int) -> list:
-    chunk_duration = 60
-    combined = []
-
-    for chunk_index in range(total_chunks):
-        chunk_segments = [
-            s for s in all_segments if s.get("chunk_index") == chunk_index
-        ]
-
-        time_offset = chunk_index * chunk_duration
-        for segment in chunk_segments:
-            adjusted_segment = segment.copy()
-            adjusted_segment["start"] += time_offset
-            adjusted_segment["end"] += time_offset
-            combined.append(adjusted_segment)
-
-        combined.sort(key=lambda x: x["start"])
-        return combined
 
 
 def create_final_srt_file(segments: list, output_path: str):
@@ -342,8 +331,10 @@ def assemble_final_video(job_id: str, total_chunks: int):
                 s3_resource.download_file(bucket_name, s3_key, local_json_path)
                 with open(local_json_path, encoding="utf-8") as f:
                     chunk_data = json.load(f)
-                    all_segments.extend(chunk_data["segments"])
-                print(f"Downloaded chunk {chunk_index}")
+                    for segment in chunk_data.get("segments", []):
+                        segment["chunk_index"] = chunk_index
+                    all_segments.extend(chunk_data.get("segments", []))
+                    print(f"Downloaded chunk {chunk_index}")
             except Exception as e:
                 print(f"Warning: could not load chunk {chunk_index}: {e}")
                 continue
@@ -351,7 +342,8 @@ def assemble_final_video(job_id: str, total_chunks: int):
         if not all_segments:
             raise RuntimeError("No transcription segments found")
 
-        combined_segments = combine_segments_with_timing(all_segments, total_chunks)
+        all_segments.sort(key=lambda x: x["start"])
+        combined_segments = all_segments
 
         srt_path = f"/tmp/audio/{job_id}_final.srt"
         create_final_srt_file(combined_segments, srt_path)
@@ -430,8 +422,8 @@ async def generate_subtitles(
     original_key = f"originals/{job_id_str}/original_{os.path.basename(filepath)}"
     s3_resource.upload_file(filepath, bucket_name, original_key)
 
-    chunk_files = split_file_into_chunks(filepath, job_id_str)
-    total_chunks = len(chunk_files)
+    chunk_metadata = split_file_into_chunks(filepath, job_id_str)
+    total_chunks = len(chunk_metadata)
     status_table.put_item(
         Item={
             "job_id": job_id_str,
@@ -441,12 +433,29 @@ async def generate_subtitles(
             "total_chunks": total_chunks,
         }
     )
+    chunk_path = [cm["path"] for cm in chunk_metadata]
     file_extension = get_file_extension(filepath)
-    await upload_chunks_to_s3(chunk_files, job_id, file_extension)
+    await upload_chunks_to_s3(chunk_path, job_id, file_extension)
 
     try:
-        response = trigger_lambda(job_id, len(chunk_files))
-        print("Lambda invoked successfully:", response)
+        for cm in chunk_metadata:
+            s3_key = f"chunks/{job_id_str}/chunk_{cm['index']:03d}{file_extension}"
+            lambda_client.invoke(
+                FunctionName="subtitle-gen-lambda",
+                InvocationType="Event",
+                Payload=json.dumps(
+                    {
+                        "job_id": job_id_str,
+                        "chunk_index": cm["index"],
+                        "chunk_start": cm["start"],
+                        "total_chunks": total_chunks,
+                        "s3_key": s3_key,
+                        "bucket_name": bucket_name,
+                    }
+                ),
+            )
+
+        print("Lambda invoked successfully")
 
     except Exception as e:
         print(f"Error invoking Lambda: {e}")
@@ -472,7 +481,7 @@ async def generate_subtitles(
     status_table.update_item(
         Key={"job_id": job_id_str, "chunk_index": Decimal(-1)},
         UpdateExpression="SET total_chunks = :tc",
-        ExpressionAttributeValues={":tc": len(chunk_files)},
+        ExpressionAttributeValues={":tc": len(chunk_metadata)},
     )
     return {"job_id": job_id, "status": "started"}
 

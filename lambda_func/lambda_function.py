@@ -75,6 +75,7 @@ def lambda_handler(event, context):
     bucket_name: str = payload["bucket_name"]
     total_chunks: int = payload["total_chunks"]
     chunk_index: int = payload["chunk_index"]
+    chunk_start: float = float(payload["chunk_start"])
 
     original_filename: str = s3_key.split("/")[-1]
     final_filepath: str = f"/tmp/{original_filename}"
@@ -130,6 +131,7 @@ def lambda_handler(event, context):
             transcription_data = {
                 "job_id": job_id,
                 "chunk_index": chunk_index,
+                "chunk_start": chunk_start,
                 "total_chunks": total_chunks,
                 "original_file": original_filename,
                 "segments": [],
@@ -153,13 +155,13 @@ def lambda_handler(event, context):
                             {"word": word.word, "start": word.start, "end": word.end}
                         )
 
-                transcription_data["segments"].append(segment_data)
-
-            # end_time = time.time()
-            # processed_time = end_time - start_time
-
-            # print(f"\nTranscription complete and saved to {transcript_filename}.")
-            # print(f"Processed in {processed_time:.2f} seconds")
+                transcription_data["segments"].append(
+                    {
+                        "start": segment["start"] + chunk_start,
+                        "end": segment["end"] + chunk_start,
+                        "text": segment["text"].strip(),
+                    }
+                )
 
             json_filename = os.path.join(download_dir, f"{FILE_NAME_FOR_TXT}.json")
             with open(json_filename, "w", encoding="utf-8") as f:
