@@ -13,6 +13,7 @@ from uuid import UUID
 import aioboto3
 import boto3
 import yt_dlp
+from boto3.dynamodb.conditions import Key
 from botocore.client import BaseClient, Config
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -453,9 +454,7 @@ async def generate_subtitles(
 
 @app.get("/job-status/{job_id}")
 def check_job_status(job_id: str):
-    response = status_table.scan(
-        FilterExpression=boto3.dynamodb.conditions.Attr("job_id").eq(job_id)
-    )
+    response = status_table.query(KeyConditionExpression=Key("job_id").eq(job_id))
     if "Items" not in response or len(response["Items"]) == 0:
         raise HTTPException(status_code=404, detail="Job ID not found")
 
