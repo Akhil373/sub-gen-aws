@@ -496,7 +496,7 @@ def check_job_status(job_id: str):
             "total_chunks": 0,
         }
 
-    total_chunks = overall_job.get("total_chunks", 0)
+    total_chunks = int(overall_job.get("total_chunks", 0))
     completed_chunks = sum(
         1 for chunk in chunk_statuses if chunk.get("status") == "COMPLETED_CHUNK"
     )
