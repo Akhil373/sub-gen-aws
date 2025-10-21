@@ -3,5 +3,6 @@ audio/*
 .idea
 models/*
 __pycache__
+youtube*
 test.py
 lambda_func.zip

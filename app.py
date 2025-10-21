@@ -472,12 +472,12 @@ async def generate_subtitles(
 
     job_id_str: str = str(job_id)
 
-    original_key = f"originals/{job_id_str}/original_{file.filename}"
+    original_key = f"originals/{job_id_str}/original_{os.path.basename(filepath)}"
     s3_resource.upload_file(filepath, bucket_name, original_key)
 
     status_table.put_item(
         Item={
-            "job_id": job_id,
+            "job_id": job_id_str,
             "chunk_index": -1,
             "status": "STARTED",
             "original_filename": os.path.basename(filepath),
