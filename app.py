@@ -532,9 +532,14 @@ def check_job_status(job_id: str):
             overall_job = item
         else:
             chunk_statuses.append(item)
-
     if not overall_job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if not overall_job:
+        overall_job = {
+            "status": "STARTED",
+            "total_chunks": len(chunk_statuses),
+        }
 
     total_chunks = overall_job.get("total_chunks", 0)
     completed_chunks = sum(
