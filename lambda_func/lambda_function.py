@@ -11,7 +11,7 @@ os.environ["HF_HOME"] = "/tmp/huggingface"
 os.environ["HF_HUB_CACHE"] = "/tmp/huggingface/hub"
 
 dynamodb = boto3.resource("dynamodb", region_name="eu-north-1")
-status_table = dynamodb.Table("SubtitleJobStatus")
+status_table = dynamodb.Table("SubtitleJobStatusV2")
 
 s3_resource: BaseClient = boto3.client(
     "s3", region_name="eu-north-1", config=Config(signature_version="s3v4")

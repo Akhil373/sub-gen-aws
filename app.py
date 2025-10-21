@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
@@ -308,9 +309,8 @@ def assemble_final_video(job_id: str, total_chunks: int):
             }
         )
 
-        resp = status_table.get_item(
-            Key={"job_id": job_id},
-        )
+        resp = status_table.query(KeyConditionExpression=Key("job_id").eq(job_id))
+
         if "Item" not in resp or not resp["Item"].get("original_filename"):
             raise RuntimeError("original_filename not found in DynamoDB")
 
@@ -445,7 +445,7 @@ async def generate_subtitles(
         print("Error clearning on tmp files: " + e)
 
     status_table.update_item(
-        Key={"job_id": job_id_str},
+        Key={"job_id": job_id_str, "chunk_index": Decimal(-1)},
         UpdateExpression="SET total_chunks = :tc",
         ExpressionAttributeValues={":tc": len(chunk_files)},
     )
