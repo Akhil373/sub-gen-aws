@@ -52,6 +52,16 @@ def format_time(seconds):
     return f"{hours:02d}:{minutes:02d}:{int(seconds_remainder):02d},{milliseconds:03d}"
 
 
+def convert_decimals_to_numbers(obj):
+    if isinstance(obj, dict):
+        return {key: convert_decimals_to_numbers(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals_to_numbers(item) for item in obj]
+    elif isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    return obj
+
+
 def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
     URLS = [VIDEO_URL]
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -516,4 +526,5 @@ def check_job_status(job_id: str):
             response_body["download_url"] = presigned_url
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+    response_body = convert_decimals_to_numbers(response_body)
     return JSONResponse(response_body)
