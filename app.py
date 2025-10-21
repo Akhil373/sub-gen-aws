@@ -162,7 +162,7 @@ def trigger_lambda(job_id: str, total_chunks: int):
             InvocationType="Event",
             Payload=json.dumps(
                 {
-                    "job_id": job_id,
+                    "job_id": str(job_id),
                     "chunk_index": chunk_index,
                     "total_chunks": total_chunks,
                     "s3_key": f"chunks/{job_id}/chunk_{chunk_index:03d}.mp4",
@@ -374,7 +374,7 @@ def assemble_final_video(job_id: str, total_chunks: int):
         )
 
         resp = status_table.get_item(
-            Key={"job_id": job_id, "chunk_index": -1},
+            Key={"job_id": job_id},
             ProjectionExpression="original_filename",
         )
         if "Item" not in resp or not resp["Item"].get("original_filename"):
@@ -508,7 +508,7 @@ async def generate_subtitles(
         print("Error clearning on tmp files: " + e)
 
     status_table.update_item(
-        Key={"job_id": job_id_str, "chunk_index": -1},
+        Key={"job_id": job_id_str},
         UpdateExpression="SET total_chunks = :tc",
         ExpressionAttributeValues={":tc": len(chunk_files)},
     )
