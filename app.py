@@ -319,12 +319,16 @@ def assemble_final_video(job_id: str, total_chunks: int):
                 ":m": "Combining transcriptions and creating final video",
             },
         )
-        resp = status_table.query(KeyConditionExpression=Key("job_id").eq(job_id))
+        meta_resp = status_table.get_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            ProjectionExpression="original_filename, #s",
+            ExpressionAttributeNames={"#s": "status"},
+        )
 
-        if "Item" not in resp or not resp["Item"].get("original_filename"):
+        if "Item" not in meta_resp or "original_filename" not in meta_resp["Item"]:
             raise RuntimeError("original_filename not found in DynamoDB")
 
-        original_filename = resp["Item"]["original_filename"]
+        original_filename = meta_resp["Item"]["original_filename"]
         original_basename = os.path.splitext(original_filename)[0]
 
         all_segments = []
