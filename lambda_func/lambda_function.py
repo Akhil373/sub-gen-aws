@@ -55,16 +55,6 @@ def create_subtitle_chunks(segments, max_words=8, max_duration=5.0):
     return subtitle_chunks
 
 
-def format_time(seconds):
-    seconds -= 0.2
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    seconds_remainder = seconds % 60
-    milliseconds = int((seconds_remainder - int(seconds_remainder)) * 1000)
-
-    return f"{hours:02d}:{minutes:02d}:{int(seconds_remainder):02d},{milliseconds:03d}"
-
-
 def clean_files(path, zip_file, video_path):
     try:
         if path and os.path.isdir(path):
@@ -97,7 +87,7 @@ def lambda_handler(event, context):
             Item={
                 "job_id": job_id,
                 "chunk_index": chunk_index,
-                "status": "PROCESSING CHUNK",
+                "status": "PROCESSING_CHUNK",
                 "message": f"Processing chunk {chunk_index}/{total_chunks}",
                 "total_chunks": total_chunks,
             }
@@ -151,14 +141,14 @@ def lambda_handler(event, context):
 
             for segment in subtitle_chunks:
                 segment_data = {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment.text,
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": segment["text"],
                 }
 
-                if hasattr(segment, "words") and segment.words:
+                if hasattr(segment, "words") and segment["words"]:
                     segment_data["words"] = []
-                    for word in segment.words:
+                    for word in segment["words"]:
                         segment_data["words"].append(
                             {"word": word.word, "start": word.start, "end": word.end}
                         )
@@ -202,7 +192,12 @@ def lambda_handler(event, context):
 
         try:
             status_table.put_item(
-                Item={"job_id": job_id, "status": "FAILED", "message": error_msg}
+                Item={
+                    "job_id": job_id,
+                    "chunk_index": chunk_index,
+                    "status": "FAILED_CHUNK",
+                    "message": error_msg,
+                }
             )
         except Exception as db_e:
             print(

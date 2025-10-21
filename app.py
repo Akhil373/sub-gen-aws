@@ -40,6 +40,16 @@ dynamodb = boto3.resource("dynamodb", region_name="eu-north-1")
 status_table = dynamodb.Table("SubtitleJobStatus")
 
 
+def format_time(seconds):
+    seconds -= 0.2
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    seconds_remainder = seconds % 60
+    milliseconds = int((seconds_remainder - int(seconds_remainder)) * 1000)
+
+    return f"{hours:02d}:{minutes:02d}:{int(seconds_remainder):02d},{milliseconds:03d}"
+
+
 def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
     URLS = [VIDEO_URL]
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -89,16 +99,10 @@ def youtube_download_video(VIDEO_URL, DOWNLOAD_DIR, output_template):
             return None
 
 
-def clean_files(path, zip_file, video_path):
+def clean_files(path):
     try:
         if os.path.isdir(path):
             shutil.rmtree(path)
-        if os.path.exists(zip_file):
-            os.remove(zip_file)
-        if os.path.exists(video_path):
-            os.remove(video_path)
-        # if os.path.exists(srt_path):
-        #     os.remove(srt_path)
         print("Log: Cleaned all files")
     except Exception as err:
         print("Error clearing files: ", err)
@@ -167,6 +171,7 @@ def trigger_lambda(job_id: str, total_chunks: int):
             ),
         )
     return response
+
 
 def add_subtitles(media_path, subtitle_file):
     base, ext = os.path.splitext(os.path.basename(media_path))
@@ -249,11 +254,186 @@ def add_subtitles(media_path, subtitle_file):
         print(f"An error occurred: {e}")
 
 
-def create_srt_file()
+def combine_segments_with_timing(all_segments: list, total_chunks: int) -> list:
+    chunk_duration = 60
+    combined = []
 
-def combine_transcriptions()
+    for chunk_index in range(total_chunks):
+        chunk_segments = [
+            s for s in all_segments if s.get("chunk_index") == chunk_index
+        ]
 
-def assemble_final_video()
+        time_offset = chunk_index * chunk_duration
+        for segment in chunk_segments:
+            adjusted_segment = segment.copy()
+            adjusted_segment["start"] += time_offset
+            adjusted_segment["end"] += time_offset
+            combined.append(adjusted_segment)
+
+        combined.sort(key=lambda x: x["start"])
+        return combined
+
+
+def create_final_srt_file(segments: list, output_path: str):
+    with open(output_path, "w", encoding="utf-8") as f:
+        for i, segment in enumerate(segments, 1):
+            start_time = format_time(segment["start"])
+            end_time = format_time(segment["end"])
+            text = segment["text"]
+
+            f.write(f"{i}\n")
+            f.write(f"{start_time} --> {end_time}\n")
+            f.write(f"{text}\n\n")
+
+    print(f"Created final SRT file with {len(segments)} segments")
+
+
+def download_original_video(job_id: str, filename: str) -> str:
+    original_key = f"originals/{job_id}/original_{filename}"
+    local_path = f"/tmp/audio/{job_id}_original_{filename}"
+
+    s3_resource.download_file(bucket_name, original_key, local_path)
+    return local_path
+
+
+def assemble_final_video(job_id: str, total_chunks: int, filename: str):
+    try:
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "ASSEMBLING",
+                "message": "Combining transcriptions and creating final video",
+            }
+        )
+
+        all_segments = []
+        for chunk_index in range(total_chunks):
+            s3_key = f"transcriptions/{job_id}/chunk_{chunk_index:03d}.json"
+            local_json_path = f"/tmp/audio/{job_id}_chunk_{chunk_index}.json"
+
+            try:
+                s3_resource.download_file(bucket_name, s3_key, local_json_path)
+                with open(local_json_path, "r", encoding="utf-8") as f:
+                    chunk_data = json.load(f)
+                    all_segments.extend(chunk_data["segments"])
+                print(f"Downloaded chunk {chunk_index}")
+            except Exception as e:
+                print(f"Error downloading chunk {chunk_index}: {e}")
+                continue
+
+        if not all_segments:
+            raise Exception("No transcription data found for any chunks")
+
+        combined_segments = combine_segments_with_timing(all_segments, total_chunks)
+
+        srt_filename = f"/tmp/{job_id}_final.srt"
+        create_final_srt_file(combined_segments, srt_filename)
+
+        original_video_path = download_original_video(job_id, filename)
+
+        final_video_path = add_subtitles(original_video_path, srt_filename)
+        final_key = f"results/{job_id}/final_subtitled_video.mp4"
+        s3_resource.upload_file(final_video_path, bucket_name, final_key)
+
+        # 6. Update status to completed
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "COMPLETED",
+                "result_key": final_key,
+                "message": "Final video with subtitles created successfully",
+            }
+        )
+
+        print(f"SUCCESS: Final assembly completed for job {job_id}")
+
+    except Exception as e:
+        error_msg = f"Final assembly failed: {str(e)}"
+        print(error_msg)
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "FAILED",
+                "message": error_msg,
+            }
+        )
+
+
+def assemble_final_video(job_id: str, total_chunks: int):
+    try:
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "ASSEMBLING",
+                "message": "Combining transcriptions and creating final video",
+            }
+        )
+
+        resp = status_table.get_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            ProjectionExpression="original_filename",
+        )
+        if "Item" not in resp or not resp["Item"].get("original_filename"):
+            raise RuntimeError("original_filename not found in DynamoDB")
+        original_basename = os.path.splitext(resp["Item"]["original_filename"])[0]
+
+        all_segments = []
+        for chunk_index in range(total_chunks):
+            s3_key = f"transcriptions/{job_id}/chunk_{chunk_index:03d}.json"
+            local_json_path = f"/tmp/audio/{job_id}_chunk_{chunk_index}.json"
+            try:
+                s3_resource.download_file(bucket_name, s3_key, local_json_path)
+                with open(local_json_path, encoding="utf-8") as f:
+                    all_segments.extend(json.load(f)["segments"])
+            except Exception as e:
+                print(f"Warning: could not load chunk {chunk_index}: {e}")
+                continue
+
+        if not all_segments:
+            raise RuntimeError("No transcription segments found")
+
+        combined_segments = combine_segments_with_timing(all_segments, total_chunks)
+
+        srt_path = f"/tmp/audio/{job_id}_final.srt"
+        create_final_srt_file(combined_segments, srt_path)
+
+        original_video_path = download_original_video(
+            job_id, resp["Item"]["original_filename"]
+        )
+
+        final_video_local = add_subtitles(original_video_path, srt_path)
+        if not final_video_local:
+            raise RuntimeError("Subtitle burn-in failed")
+
+        final_s3_key = f"results/{job_id}/{original_basename}_subtitled.mp4"
+        s3_resource.upload_file(final_video_local, bucket_name, final_s3_key)
+
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "COMPLETED",
+                "result_key": final_s3_key,
+                "message": "Final video with subtitles created successfully",
+            }
+        )
+        print(f"SUCCESS: final video {final_s3_key} assembled for job {job_id}")
+
+    except Exception as e:
+        error_msg = f"Final assembly failed: {str(e)}"
+        print(error_msg)
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": -1,
+                "status": "FAILED",
+                "message": error_msg,
+            }
+        )
 
 
 @app.get("/test")
@@ -274,6 +454,7 @@ async def generate_subtitles(
         filepath = Path(upload_dir) / file.filename
         with open(filepath, "wb", encoding="utf-8") as f:
             shutil.copyfileobj(file.file, f)
+
         print(f"File saved successfully in {filepath}")
     elif youtube_url:
         output_template = os.path.join(upload_dir, "%(title)s.%(ext)s")
@@ -283,6 +464,7 @@ async def generate_subtitles(
             raise HTTPException(
                 status_code=400, detail="Failed to download YouTube video"
             )
+
     else:
         raise HTTPException(
             status_code=400, detail="You must provide either a file or youtube URL."
@@ -290,11 +472,15 @@ async def generate_subtitles(
 
     job_id_str: str = str(job_id)
 
+    original_key = f"originals/{job_id_str}/original_{file.filename}"
+    s3_resource.upload_file(filepath, bucket_name, original_key)
+
     status_table.put_item(
         Item={
             "job_id": job_id,
             "chunk_index": -1,
             "status": "STARTED",
+            "original_filename": os.path.basename(filepath),
             "total_chunks": 0,
         }
     )
@@ -314,6 +500,12 @@ async def generate_subtitles(
         raise HTTPException(
             status_code=500, detail=f"Job initialization failed: {str(e)}"
         ) from e
+
+    try:
+        clean_files(upload_dir)
+        print("cleaned up temp files")
+    except Exception as e:
+        print("Error clearning on tmp files: " + e)
 
     status_table.update_item(
         Key={"job_id": job_id_str, "chunk_index": -1},
@@ -361,23 +553,29 @@ def check_job_status(job_id: str):
         "failed_chunks": failed_chunks,
     }
 
-    if (completed_chunks >= total_chunks and overall_job.get("status") not in ["ASSEMBLING", "COMPLETED"]):
+    if completed_chunks >= total_chunks and overall_job.get("status") not in [
+        "ASSEMBLING",
+        "COMPLETED",
+    ]:
         import threading
-        thread = threading.Thread(target=assemble_final_video, args=(job_id, total_chunks))
+
+        thread = threading.Thread(
+            target=assemble_final_video, args=(job_id, total_chunks)
+        )
         thread.daemon = True
         thread.start()
 
         response_body["status"] = "ASSEMBLING"
 
     elif overall_job.get("status") == "COMPLETED":
-        result_key = overall_job.get('result_key')
+        result_key = overall_job.get("result_key")
         try:
             presigned_url = s3_resource.generate_presigned_url(
                 "get_object",
-                Params={"Bucket":bucket_name, "Key": result_key},
-                ExpiresIn = 3600,
+                Params={"Bucket": bucket_name, "Key": result_key},
+                ExpiresIn=3600,
             )
-            response_body['download_url']= presigned_url
+            response_body["download_url"] = presigned_url
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     return JSONResponse(response_body)
