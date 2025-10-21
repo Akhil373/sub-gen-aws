@@ -296,72 +296,6 @@ def download_original_video(job_id: str, filename: str) -> str:
     return local_path
 
 
-def assemble_final_video(job_id: str, total_chunks: int, filename: str):
-    try:
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "ASSEMBLING",
-                "message": "Combining transcriptions and creating final video",
-            }
-        )
-
-        all_segments = []
-        for chunk_index in range(total_chunks):
-            s3_key = f"transcriptions/{job_id}/chunk_{chunk_index:03d}.json"
-            local_json_path = f"/tmp/audio/{job_id}_chunk_{chunk_index}.json"
-
-            try:
-                s3_resource.download_file(bucket_name, s3_key, local_json_path)
-                with open(local_json_path, "r", encoding="utf-8") as f:
-                    chunk_data = json.load(f)
-                    all_segments.extend(chunk_data["segments"])
-                print(f"Downloaded chunk {chunk_index}")
-            except Exception as e:
-                print(f"Error downloading chunk {chunk_index}: {e}")
-                continue
-
-        if not all_segments:
-            raise Exception("No transcription data found for any chunks")
-
-        combined_segments = combine_segments_with_timing(all_segments, total_chunks)
-
-        srt_filename = f"/tmp/{job_id}_final.srt"
-        create_final_srt_file(combined_segments, srt_filename)
-
-        original_video_path = download_original_video(job_id, filename)
-
-        final_video_path = add_subtitles(original_video_path, srt_filename)
-        final_key = f"results/{job_id}/final_subtitled_video.mp4"
-        s3_resource.upload_file(final_video_path, bucket_name, final_key)
-
-        # 6. Update status to completed
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "COMPLETED",
-                "result_key": final_key,
-                "message": "Final video with subtitles created successfully",
-            }
-        )
-
-        print(f"SUCCESS: Final assembly completed for job {job_id}")
-
-    except Exception as e:
-        error_msg = f"Final assembly failed: {str(e)}"
-        print(error_msg)
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "FAILED",
-                "message": error_msg,
-            }
-        )
-
-
 def assemble_final_video(job_id: str, total_chunks: int):
     try:
         status_table.put_item(
@@ -375,11 +309,12 @@ def assemble_final_video(job_id: str, total_chunks: int):
 
         resp = status_table.get_item(
             Key={"job_id": job_id},
-            ProjectionExpression="original_filename",
         )
         if "Item" not in resp or not resp["Item"].get("original_filename"):
             raise RuntimeError("original_filename not found in DynamoDB")
-        original_basename = os.path.splitext(resp["Item"]["original_filename"])[0]
+
+        original_filename = resp["Item"]["original_filename"]
+        original_basename = os.path.splitext(original_filename)[0]
 
         all_segments = []
         for chunk_index in range(total_chunks):
@@ -388,7 +323,9 @@ def assemble_final_video(job_id: str, total_chunks: int):
             try:
                 s3_resource.download_file(bucket_name, s3_key, local_json_path)
                 with open(local_json_path, encoding="utf-8") as f:
-                    all_segments.extend(json.load(f)["segments"])
+                    chunk_data = json.load(f)
+                    all_segments.extend(chunk_data["segments"])
+                print(f"Downloaded chunk {chunk_index}")
             except Exception as e:
                 print(f"Warning: could not load chunk {chunk_index}: {e}")
                 continue
@@ -401,9 +338,7 @@ def assemble_final_video(job_id: str, total_chunks: int):
         srt_path = f"/tmp/audio/{job_id}_final.srt"
         create_final_srt_file(combined_segments, srt_path)
 
-        original_video_path = download_original_video(
-            job_id, resp["Item"]["original_filename"]
-        )
+        original_video_path = download_original_video(job_id, original_filename)
 
         final_video_local = add_subtitles(original_video_path, srt_path)
         if not final_video_local:
@@ -452,7 +387,7 @@ async def generate_subtitles(
 
     if file:
         filepath = Path(upload_dir) / file.filename
-        with open(filepath, "wb", encoding="utf-8") as f:
+        with open(filepath, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
         print(f"File saved successfully in {filepath}")
@@ -475,16 +410,17 @@ async def generate_subtitles(
     original_key = f"originals/{job_id_str}/original_{os.path.basename(filepath)}"
     s3_resource.upload_file(filepath, bucket_name, original_key)
 
+    chunk_files = split_file_into_chunks(filepath, job_id_str)
+    total_chunks = len(chunk_files)
     status_table.put_item(
         Item={
             "job_id": job_id_str,
             "chunk_index": -1,
             "status": "STARTED",
             "original_filename": os.path.basename(filepath),
-            "total_chunks": 0,
+            "total_chunks": total_chunks,
         }
     )
-    chunk_files = split_file_into_chunks(filepath, job_id_str)
     file_extension = get_file_extension(filepath)
     await upload_chunks_to_s3(chunk_files, job_id, file_extension)
 
@@ -517,8 +453,8 @@ async def generate_subtitles(
 
 @app.get("/job-status/{job_id}")
 def check_job_status(job_id: str):
-    response = status_table.query(
-        KeyConditionExpression=boto3.dynamodb.conditions.Key("job_id").eq(job_id)
+    response = status_table.scan(
+        FilterExpression=boto3.dynamodb.conditions.Attr("job_id").eq(job_id)
     )
     if "Items" not in response or len(response["Items"]) == 0:
         raise HTTPException(status_code=404, detail="Job ID not found")
@@ -532,13 +468,11 @@ def check_job_status(job_id: str):
             overall_job = item
         else:
             chunk_statuses.append(item)
-    if not overall_job:
-        raise HTTPException(status_code=404, detail="Job not found")
 
     if not overall_job:
         overall_job = {
             "status": "STARTED",
-            "total_chunks": len(chunk_statuses),
+            "total_chunks": 0,
         }
 
     total_chunks = overall_job.get("total_chunks", 0)
