@@ -136,7 +136,7 @@ async def upload_chunks_to_s3(chunk_files: list, job_id: str, file_extension: st
 
 
 def split_file_into_chunks(
-    filepath: str, job_id: str, chunk_duration: int = 60
+    filepath: str, job_id: str, chunk_duration: int = 60, overlap: int = 5
 ) -> List[dict]:
     original_ext = get_file_extension(filepath)
     output_dir = f"/tmp/audio/{job_id}"
@@ -156,12 +156,13 @@ def split_file_into_chunks(
     total_duration = float(result.stdout.strip().replace("duration=", ""))
 
     chunk_files = []
-    current_time = 0.0
     chunk_index = 0
+    current_start = 0.0
 
-    while current_time < total_duration:
-        chunk_start = current_time
-        chunk_end = min(current_time + chunk_duration, total_duration)
+    while current_start < total_duration:
+        segment_start = current_start
+        segment_end = min(current_start + chunk_duration + overlap, total_duration)
+
         output_path = os.path.join(output_dir, f"chunk_{chunk_index:03d}{original_ext}")
 
         cmd = [
@@ -169,9 +170,9 @@ def split_file_into_chunks(
             "-i",
             filepath,
             "-ss",
-            str(chunk_start),
+            str(segment_start),
             "-to",
-            str(chunk_end),
+            str(segment_end),
             "-c",
             "copy",
             output_path,
@@ -182,10 +183,14 @@ def split_file_into_chunks(
         subprocess.run(cmd, check=True)
 
         chunk_files.append(
-            {"path": output_path, "start": chunk_start, "index": chunk_index}
+            {
+                "path": output_path,
+                "start": current_start,
+                "index": chunk_index,
+            }
         )
 
-        current_time = chunk_end
+        current_start += chunk_duration
         chunk_index += 1
 
     return chunk_files
