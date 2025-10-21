@@ -332,8 +332,9 @@ def assemble_final_video(job_id: str, total_chunks: int):
         original_basename = os.path.splitext(original_filename)[0]
 
         all_segments = []
-        tmp_dir = "/tmp/audio"
-        os.mkdir(tmp_dir, exist_ok=True)
+        upload_dir = "/tmp/audio"
+        os.makedirs(upload_dir, exist_ok=True)
+
         for chunk_index in range(total_chunks):
             s3_key = f"transcriptions/{job_id}/chunk_{chunk_index:03d}.json"
             local_json_path = f"/tmp/audio/{job_id}_chunk_{chunk_index}.json"
