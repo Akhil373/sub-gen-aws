@@ -310,15 +310,15 @@ def download_original_video(job_id: str, filename: str) -> str:
 
 def assemble_final_video(job_id: str, total_chunks: int):
     try:
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "ASSEMBLING",
-                "message": "Combining transcriptions and creating final video",
-            }
+        status_table.update_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            UpdateExpression="SET #s = :s, #m = :m",
+            ExpressionAttributeNames={"#s": "status", "#m": "message"},
+            ExpressionAttributeValues={
+                ":s": "ASSEMBLING",
+                ":m": "Combining transcriptions and creating final video",
+            },
         )
-
         resp = status_table.query(KeyConditionExpression=Key("job_id").eq(job_id))
 
         if "Item" not in resp or not resp["Item"].get("original_filename"):
@@ -358,27 +358,29 @@ def assemble_final_video(job_id: str, total_chunks: int):
         final_s3_key = f"results/{job_id}/{original_basename}_subtitled.mp4"
         s3_resource.upload_file(final_video_local, bucket_name, final_s3_key)
 
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "COMPLETED",
-                "result_key": final_s3_key,
-                "message": "Final video with subtitles created successfully",
-            }
+        status_table.update_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            UpdateExpression="SET #s = :s, result_key = :rk, #m = :m",
+            ExpressionAttributeNames={"#s": "status", "#m": "message"},
+            ExpressionAttributeValues={
+                ":s": "COMPLETED",
+                ":rk": final_s3_key,
+                ":m": "Final video with subtitles created successfully",
+            },
         )
         print(f"SUCCESS: final video {final_s3_key} assembled for job {job_id}")
 
     except Exception as e:
         error_msg = f"Final assembly failed: {str(e)}"
         print(error_msg)
-        status_table.put_item(
-            Item={
-                "job_id": job_id,
-                "chunk_index": -1,
-                "status": "FAILED",
-                "message": error_msg,
-            }
+        status_table.update_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            UpdateExpression="SET #s = :s, #m = :m",
+            ExpressionAttributeNames={"#s": "status", "#m": "message"},
+            ExpressionAttributeValues={
+                ":s": "FAILED",
+                ":m": error_msg,
+            },
         )
 
 
@@ -441,8 +443,14 @@ async def generate_subtitles(
 
     except Exception as e:
         print(f"Error invoking Lambda: {e}")
-        status_table.put_item(
-            Item={"job_id": job_id_str, "status": "FAILED", "message": str(e)}
+        status_table.update_item(
+            Key={"job_id": job_id, "chunk_index": -1},
+            UpdateExpression="SET #s = :s, #m = :m",
+            ExpressionAttributeNames={"#s": "status", "#m": "message"},
+            ExpressionAttributeValues={
+                ":s": "FAILED",
+                ":m": e,
+            },
         )
         raise HTTPException(
             status_code=500, detail=f"Job initialization failed: {str(e)}"
