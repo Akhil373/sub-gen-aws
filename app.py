@@ -38,7 +38,7 @@ s3_resource: BaseClient = boto3.client(
 bucket_name = "subtitle-generator-project"
 lambda_client = boto3.client("lambda", region_name="eu-north-1")
 dynamodb = boto3.resource("dynamodb", region_name="eu-north-1")
-status_table = dynamodb.Table("SubtitleJobStatus")
+status_table = dynamodb.Table("SubtitleJobStatusV2")
 
 
 def format_time(seconds):
