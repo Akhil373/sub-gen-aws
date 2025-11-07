@@ -16,12 +16,14 @@ import boto3
 import yt_dlp
 from boto3.dynamodb.conditions import Key
 from botocore.client import BaseClient, Config
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
+load_dotenv()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://fast-subs.vercel.app"],
@@ -40,6 +42,8 @@ bucket_name = "subtitle-generator-project"
 lambda_client = boto3.client("lambda", region_name="eu-north-1")
 dynamodb = boto3.resource("dynamodb", region_name="eu-north-1")
 status_table = dynamodb.Table("SubtitleJobStatusV2")
+sqs = boto3.client("sqs", region_name="eu-north-1")
+queue_url = os.getenv("SQS_QUEUE_URL")
 
 
 def format_time(seconds):
@@ -448,10 +452,9 @@ async def generate_subtitles(
     try:
         for cm in chunk_metadata:
             s3_key = f"chunks/{job_id_str}/chunk_{cm['index']:03d}{file_extension}"
-            lambda_client.invoke(
-                FunctionName="subtitle-gen-lambda",
-                InvocationType="Event",
-                Payload=json.dumps(
+            sqs.send_message(
+                QueueUrl=queue_url,
+                MessageBody=json.dumps(
                     {
                         "job_id": job_id_str,
                         "chunk_index": cm["index"],
@@ -463,7 +466,7 @@ async def generate_subtitles(
                 ),
             )
 
-        print("Lambda invoked successfully")
+        print("SQS messages sent successfully")
 
     except Exception as e:
         print(f"Error invoking Lambda: {e}")

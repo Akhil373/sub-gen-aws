@@ -69,6 +69,9 @@ def clean_files(path, zip_file, video_path):
 
 
 def lambda_handler(event, context):
+    if "Records" in event:
+        event = json.loads(event["Records"][0]["body"])
+
     payload = event if "body" not in event else json.loads(event["body"])
     s3_key: str = payload["s3_key"]
     job_id: str = payload["job_id"]
