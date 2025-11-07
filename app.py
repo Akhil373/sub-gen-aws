@@ -438,7 +438,7 @@ async def generate_subtitles(
             "status": "STARTED",
             "original_filename": os.path.basename(filepath),
             "total_chunks": total_chunks,
-            "start_time": start_time,
+            "start_time": Decimal(str(start_time)),
         }
     )
     chunk_path = [cm["path"] for cm in chunk_metadata]
