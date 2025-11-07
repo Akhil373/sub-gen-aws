@@ -43,7 +43,7 @@ status_table = dynamodb.Table("SubtitleJobStatusV2")
 
 
 def format_time(seconds):
-    seconds -= 0.2
+    # seconds -= 0.2
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     seconds_remainder = seconds % 60
