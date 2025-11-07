@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -397,6 +398,7 @@ async def test_endpoint():
 async def generate_subtitles(
     file: Optional[UploadFile] = File(None), youtube_url: Optional[str] = Form(None)
 ):
+    start_time = time.time()
     upload_dir = "/tmp/audio"
     os.makedirs(upload_dir, exist_ok=True)
     job_id: UUID = uuid.uuid4()
@@ -436,6 +438,7 @@ async def generate_subtitles(
             "status": "STARTED",
             "original_filename": os.path.basename(filepath),
             "total_chunks": total_chunks,
+            "start_time": start_time,
         }
     )
     chunk_path = [cm["path"] for cm in chunk_metadata]
@@ -546,6 +549,11 @@ def check_job_status(job_id: str):
 
     elif overall_job.get("status") == "COMPLETED":
         result_key = overall_job.get("result_key")
+        start_time = float(overall_job.get("start_time", 0))
+        if start_time > 0:
+            total_time = time.time() - start_time
+            response_body["total_time"] = total_time
+            print(f"PERF_DATA: {job_id},{total_time:.2f}")
         try:
             presigned_url = s3_resource.generate_presigned_url(
                 "get_object",
