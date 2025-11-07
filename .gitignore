@@ -3,5 +3,6 @@ audio/*
 .idea
 models/*
 __pycache__
-test.py
+test*
 lambda_func.zip
+youtube_cookies.txt
