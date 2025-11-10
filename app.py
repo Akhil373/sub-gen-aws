@@ -141,7 +141,7 @@ async def upload_chunks_to_s3(chunk_files: list, job_id: str, file_extension: st
 
 
 def split_file_into_chunks(
-    filepath: str, job_id: str, chunk_duration: int = 180, overlap: int = 5
+    filepath: str, job_id: str, chunk_duration: int = 60, overlap: int = 5
 ) -> List[dict]:
     original_ext = get_file_extension(filepath)
     output_dir = f"/tmp/audio/{job_id}"
