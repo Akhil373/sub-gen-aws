@@ -1,122 +1,59 @@
-import os
 import json
+import os
 import shutil
-from pathlib import Path
-import tempfile
-import zipfile
 import traceback
-import time
-from faster_whisper import WhisperModel, BatchedInferencePipeline
-import subprocess
+
 import boto3
 from botocore.client import BaseClient, Config
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
-os.environ['HF_HOME'] = '/tmp/huggingface'
-os.environ['HF_HUB_CACHE'] = '/tmp/huggingface/hub'
+os.environ["HF_HOME"] = "/tmp/huggingface"
+os.environ["HF_HUB_CACHE"] = "/tmp/huggingface/hub"
 
-dynamodb = boto3.resource('dynamodb', region_name="eu-north-1")
-status_table = dynamodb.Table('SubtitleJobStatus')
+dynamodb = boto3.resource("dynamodb", region_name="eu-north-1")
+status_table = dynamodb.Table("SubtitleJobStatusV2")
 
 s3_resource: BaseClient = boto3.client(
-    "s3",
-    region_name='eu-north-1',
-    config=Config(signature_version='s3v4')
+    "s3", region_name="eu-north-1", config=Config(signature_version="s3v4")
 )
+
 
 def create_subtitle_chunks(segments, max_words=8, max_duration=5.0):
     subtitle_chunks = []
 
     for segment in segments:
-        if hasattr(segment, 'words') and segment.words:
+        if hasattr(segment, "words") and segment.words:
             current_chunk = []
             chunk_start = segment.words[0].start
 
             for i, word in enumerate(segment.words):
                 current_chunk.append(word.word)
 
-                if (len(current_chunk) >= max_words or
-                        word.end - chunk_start >= max_duration):
-
-                    text = ''.join(current_chunk).strip()
-                    subtitle_chunks.append({
-                        'start': chunk_start,
-                        'end': word.end,
-                        'text': text
-                    })
+                if (
+                    len(current_chunk) >= max_words
+                    or word.end - chunk_start >= max_duration
+                ):
+                    text = "".join(current_chunk).strip()
+                    subtitle_chunks.append(
+                        {"start": chunk_start, "end": word.end, "text": text}
+                    )
 
                     current_chunk = []
                     if i + 1 < len(segment.words):
                         chunk_start = segment.words[i + 1].start
 
             if current_chunk:
-                text = ''.join(current_chunk).strip()
-                subtitle_chunks.append({
-                    'start': chunk_start,
-                    'end': segment.words[-1].end,
-                    'text': text
-                })
+                text = "".join(current_chunk).strip()
+                subtitle_chunks.append(
+                    {"start": chunk_start, "end": segment.words[-1].end, "text": text}
+                )
         else:
-            subtitle_chunks.append({
-                'start': segment.start,
-                'end': segment.end,
-                'text': segment.text
-            })
+            subtitle_chunks.append(
+                {"start": segment.start, "end": segment.end, "text": segment.text}
+            )
 
     return subtitle_chunks
 
-def format_time(seconds):
-    seconds -= 0.2
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    seconds_remainder = seconds % 60
-    milliseconds = int((seconds_remainder - int(seconds_remainder)) * 1000)
-
-    return f"{hours:02d}:{minutes:02d}:{int(seconds_remainder):02d},{milliseconds:03d}"
-
-def add_subtitles(media_path, subtitle_file):
-    base, ext = os.path.splitext(os.path.basename(media_path))
-    dir_path = os.path.dirname(media_path)
-
-    final_output = os.path.join(dir_path, f"{base}_subtitled.mp4")
-
-    if not os.path.exists(subtitle_file):
-        print(f"Error: Subtitle file not found at {subtitle_file}")
-        return None
-
-    video_formats = ['.mp4', '.webm', '.mpeg']
-
-    try:
-        if ext.lower() in video_formats:
-            print('Found video file.')
-
-            temp_output = os.path.join(dir_path, f"{base}_temp.mp4")
-            cmd = ['ffmpeg', '-i', media_path, '-i', subtitle_file, '-c', 'copy', '-c:s', 'mov_text', temp_output, '-y']
-
-            subprocess.run(cmd, check=True, capture_output=True)
-
-            if ext.lower() == ".mp4":
-                os.remove(media_path)
-                os.rename(temp_output, media_path)
-            else:
-                os.rename(temp_output, final_output)
-        else:
-            print('Found audio file.')
-            temp_video = os.path.join(dir_path, f"{base}_temp.mp4")
-            cmd1 = ['ffmpeg', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:r=5',
-                    '-i', media_path, '-c:a', 'copy', '-shortest', temp_video, '-y']
-            subprocess.run(cmd1, check=True, capture_output=True)
-
-            cmd2 = ['ffmpeg', '-i', temp_video, '-i', subtitle_file, '-c',
-                    'copy', '-c:s', 'mov_text', final_output, '-y']
-            subprocess.run(cmd2, check=True, capture_output=True)
-            os.remove(temp_video)
-
-        return final_output
-
-    except subprocess.CalledProcessError as e:
-        print(f"FFmpeg Error: {e.stderr.decode()}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
 
 def clean_files(path, zip_file, video_path):
     try:
@@ -126,30 +63,39 @@ def clean_files(path, zip_file, video_path):
             os.remove(zip_file)
         if video_path and os.path.exists(video_path):
             os.remove(video_path)
-        # if os.path.exists(srt_path):
-        #     os.remove(srt_path)
         print("Log: Cleaned all files")
     except Exception as err:
         print("Error clearing files: ", err)
 
 
 def lambda_handler(event, context):
-    payload = event if 'body' not in event else json.loads(event['body'])
-    s3_key: str = payload['s3_key']
-    job_id: str = payload['job_id']
-    bucket_name: str = payload['bucket_name']
+    if "Records" in event:
+        event = json.loads(event["Records"][0]["body"])
 
-    original_filename: str = s3_key.split('/')[-1]
+    payload = event if "body" not in event else json.loads(event["body"])
+    s3_key: str = payload["s3_key"]
+    job_id: str = payload["job_id"]
+    bucket_name: str = payload["bucket_name"]
+    total_chunks: int = payload["total_chunks"]
+    chunk_index: int = payload["chunk_index"]
+    chunk_start: float = float(payload["chunk_start"])
+
+    original_filename: str = s3_key.split("/")[-1]
     final_filepath: str = f"/tmp/{original_filename}"
-    download_dir: str = '/tmp/audio'
-    tmp_path = None
+    download_dir: str = "/tmp/audio"
+
+    transcript_filename = None
 
     try:
-        status_table.put_item(Item={
-            'job_id': job_id,
-            'status': 'PROCESSING',
-            'message': 'Downloading file and starting transcription...'
-        })
+        status_table.put_item(
+            Item={
+                "job_id": job_id,
+                "chunk_index": chunk_index,
+                "status": "PROCESSING_CHUNK",
+                "message": f"Processing chunk {chunk_index}/{total_chunks}",
+                "total_chunks": total_chunks,
+            }
+        )
     except Exception as e:
         print(f"Failed to write START status to DynamoDB. Error: {e}")
 
@@ -170,76 +116,77 @@ def lambda_handler(event, context):
             os.makedirs(model_dir, exist_ok=True)
 
             model = WhisperModel(
-                model_size,
-                device="cpu",
-                compute_type="int8",
-                download_root=model_dir
+                model_size, device="cpu", compute_type="int8", download_root=model_dir
             )
             batched_model = BatchedInferencePipeline(model=model)
             print("Model loaded successfully.")
 
             print("\nStarting transcription...")
-            start_time = time.time()
+            # start_time = time.time()
 
             segments, info = batched_model.transcribe(
-                final_filepath,
-                batch_size=4,
-                beam_size=5,
-                word_timestamps=True
+                final_filepath, batch_size=4, beam_size=5, word_timestamps=True
             )
 
             os.makedirs(download_dir, exist_ok=True)
             transcript_filename = os.path.join(download_dir, f"{FILE_NAME_FOR_TXT}.srt")
 
-            subtitle_chunks = create_subtitle_chunks(segments, max_words=12, max_duration=4.0)
+            transcription_data = {
+                "job_id": job_id,
+                "chunk_index": chunk_index,
+                "chunk_start": chunk_start,
+                "total_chunks": total_chunks,
+                "original_file": original_filename,
+                "segments": [],
+            }
 
-            full_transcript_text = []
-            for chunk in subtitle_chunks:
-                start_time_formatted = format_time(chunk['start'])
-                end_time_formatted = format_time(chunk['end'])
+            subtitle_chunks = create_subtitle_chunks(
+                segments, max_words=12, max_duration=4.0
+            )
 
-                line = f"{start_time_formatted} --> {end_time_formatted}\n{chunk['text']}"
-                full_transcript_text.append(line)
+            for segment in subtitle_chunks:
+                segment_data = {
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": segment["text"],
+                }
 
-            with open(transcript_filename, "w", encoding="utf-8") as f:
-                count = 1
-                for line in full_transcript_text:
-                    f.write(f"{count}\n{line}\n\n")
-                    count += 1
+                if hasattr(segment, "words") and segment["words"]:
+                    segment_data["words"] = []
+                    for word in segment["words"]:
+                        segment_data["words"].append(
+                            {"word": word.word, "start": word.start, "end": word.end}
+                        )
 
-            end_time = time.time()
-            processed_time = end_time - start_time
+                transcription_data["segments"].append(
+                    {
+                        "start": segment["start"] + chunk_start,
+                        "end": segment["end"] + chunk_start,
+                        "text": segment["text"].strip(),
+                    }
+                )
 
-            print(f"\nTranscription complete and saved to {transcript_filename}.")
-            print(f"Processed in {processed_time:.2f} seconds")
+            json_filename = os.path.join(download_dir, f"{FILE_NAME_FOR_TXT}.json")
+            with open(json_filename, "w", encoding="utf-8") as f:
+                json.dump(transcription_data, f, indent=2, ensure_ascii=False)
 
-            video_output = Path(final_filepath).resolve()
-            subtitle_output = Path(transcript_filename).resolve()
+            result_key = f"transcriptions/{job_id}/chunk_{chunk_index:03d}.json"
+            s3_resource.upload_file(json_filename, bucket_name, result_key)
 
-            add_subtitles(video_output, subtitle_output)
-
-            files_to_send = [video_output, subtitle_output]
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-                with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for f in files_to_send:
-                        zf.write(f, arcname=f.name)
-                tmp_path = tmp.name
-
-            result_key = f"results/{job_id}/{original_filename}_subtitled.zip"
-            s3_resource.upload_file(tmp_path, bucket_name, result_key)
-
-            status_table.put_item(Item={
-                'job_id': job_id,
-                'status': 'COMPLETED',
-                'result_key': result_key,
-                'message': 'Subtitles generated successfully.'
-            })
+            status_table.put_item(
+                Item={
+                    "job_id": job_id,
+                    "chunk_index": chunk_index,
+                    "status": "COMPLETED_CHUNK",
+                    "result_key": result_key,
+                    "message": f"Chunk {chunk_index} processed successfully",
+                }
+            )
 
             print(f"SUCCESS: Job {job_id} completed.")
             return {
-                'statusCode': 200,
-                'body': json.dumps('Processing completed successfully.')
+                "statusCode": 200,
+                "body": json.dumps("Processing completed successfully."),
             }
 
     except Exception as e:
@@ -249,23 +196,27 @@ def lambda_handler(event, context):
         print(f"Stack Trace:\n{stack_trace}")
 
         try:
-            status_table.put_item(Item={
-                'job_id': job_id,
-                'status': 'FAILED',
-                'message': error_msg
-            })
+            status_table.put_item(
+                Item={
+                    "job_id": job_id,
+                    "chunk_index": chunk_index,
+                    "status": "FAILED_CHUNK",
+                    "message": error_msg,
+                }
+            )
         except Exception as db_e:
-
             print(
-                f"DOUBLE FAULT: Also failed to save ERROR status to DynamoDB. Original error: {error_msg}. Dynamo error: {db_e}")
+                f"DOUBLE FAULT: Also failed to save ERROR status to DynamoDB. Original error: {error_msg}. Dynamo error: {db_e}"
+            )
         raise e
 
     finally:
-        if 'model' in locals():
+        if "model" in locals():
             del model
-        if 'batched_model' in locals():
+        if "batched_model" in locals():
             del batched_model
-        clean_files(download_dir, tmp_path, final_filepath)
+        clean_files(download_dir, None, final_filepath)
         print("Model resources released.")
         import gc
+
         gc.collect()

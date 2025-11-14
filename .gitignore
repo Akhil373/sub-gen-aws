@@ -1,8 +1,10 @@
 audio/*
+.env
 .venv
 .idea
 models/*
 __pycache__
+youtube*
+test.py
 test*
 lambda_func.zip
-youtube_cookies.txt
