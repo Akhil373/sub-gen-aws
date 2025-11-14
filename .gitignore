@@ -6,5 +6,5 @@ models/*
 __pycache__
 youtube*
 test.py
+test*
 lambda_func.zip
-test/
